@@ -7,3 +7,4 @@ chroma_db/
 wiki/
 raw/
 frontend/dist/
+frontend/node_modules/

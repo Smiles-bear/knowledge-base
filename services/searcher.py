@@ -2,6 +2,7 @@
 import logging
 from store.vector_store import VectorStore
 from store.wiki_store import read_article, read_index, list_articles
+from services.query_rewriter import rewrite_query
 
 logger = logging.getLogger(__name__)
 _vector_store = None
@@ -27,10 +28,8 @@ def wiki_direct_search(keywords: list[str]) -> str:
                 found.append(art)
 
     if not found:
-        # 回退：返回索引内容
         return idx if idx else "知识库为空"
 
-    # 读找到的文章
     contents = []
     for art in found[:3]:
         c = read_article(art)
@@ -53,13 +52,19 @@ def search(query: str, route_info: dict) -> str:
     keywords = route_info.get("keywords", [query])
 
     if route_type in ("simple_chat",):
-        return ""  # 不需要知识库
+        return ""
+
+    # Query rewrite: expand and disambiguate before search
+    rewrite_result = rewrite_query(query)
+    search_query = rewrite_result.get("rewritten_query", query)
+    merged_keywords = list(set(
+        keywords + rewrite_result.get("keywords", [])
+    ))
 
     if route_type in ("wiki_direct", "wiki_with_links"):
-        result = wiki_direct_search(keywords)
+        result = wiki_direct_search(merged_keywords)
         if result and result != "知识库为空":
             return result
-        # 回退到 RAG
         logger.info("Wiki 未命中，回退到 RAG")
 
-    return rag_search(query)
+    return rag_search(search_query)

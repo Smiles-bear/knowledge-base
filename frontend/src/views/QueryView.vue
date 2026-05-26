@@ -1,71 +1,88 @@
 <template>
-  <div class="query-page">
-    <div class="chat-container">
-      <div v-if="messages.length === 0" class="welcome">
-        <div class="welcome-icon">?</div>
-        <h2>知识库问答</h2>
-        <p class="welcome-hint">
-          向企业知识库提问，系统会根据问题类型自动选择最优检索策略
-        </p>
-        <div class="example-questions">
-          <el-tag
-            v-for="q in exampleQuestions"
-            :key="q"
-            class="example-tag"
-            @click="sendMessage(q)"
-          >
-            {{ q }}
-          </el-tag>
+  <div class="query-layout">
+    <ConversationList
+      :conversations="conversations"
+      :activeId="activeConvId"
+      @select="selectConversation"
+      @new-conversation="newConversation"
+      @delete="removeConversation"
+    />
+    <div class="query-page">
+      <div class="chat-container">
+        <div v-if="messages.length === 0" class="welcome">
+          <div class="welcome-icon">?</div>
+          <h2>知识库问答</h2>
+          <p class="welcome-hint">
+            向企业知识库提问，系统会根据问题类型自动选择最优检索策略
+          </p>
+          <div class="example-questions">
+            <el-tag
+              v-for="q in exampleQuestions"
+              :key="q"
+              class="example-tag"
+              @click="sendMessage(q)"
+            >
+              {{ q }}
+            </el-tag>
+          </div>
         </div>
-      </div>
-      <div class="chat-messages" ref="chatRef">
-        <ChatBubble
-          v-for="(msg, i) in messages"
-          :key="i"
-          :text="msg.text"
-          :role="msg.role"
-          :meta="msg.meta"
-        />
-        <div v-if="loading" class="loading-row">
-          <el-icon class="is-loading" :size="20"><Loading /></el-icon>
-          <span>思考中...</span>
-        </div>
-      </div>
-    </div>
-    <div class="chat-input-bar">
-      <el-input
-        v-model="input"
-        placeholder="输入问题，按 Enter 发送"
-        @keyup.enter="sendMessage(input)"
-        :disabled="loading"
-        size="large"
-        clearable
-      >
-        <template #suffix>
-          <el-button
-            class="send-btn"
-            :icon="Promotion"
-            circle
-            @click="sendMessage(input)"
-            :disabled="loading || !input.trim()"
+        <div class="chat-messages" ref="chatRef">
+          <ChatBubble
+            v-for="(msg, i) in messages"
+            :key="i"
+            :text="msg.text"
+            :role="msg.role"
+            :meta="msg.meta"
           />
-        </template>
-      </el-input>
+        </div>
+      </div>
+      <div class="chat-input-bar">
+        <el-input
+          v-model="input"
+          placeholder="输入问题，按 Enter 发送"
+          @keyup.enter="sendMessage(input)"
+          :disabled="loading"
+          size="large"
+          clearable
+        >
+          <template #suffix>
+            <el-button
+              v-if="!loading"
+              class="send-btn"
+              :icon="Promotion"
+              circle
+              @click="sendMessage(input)"
+              :disabled="!input.trim()"
+            />
+            <el-button
+              v-else
+              class="stop-btn"
+              :icon="Close"
+              circle
+              @click="stopStreaming"
+            />
+          </template>
+        </el-input>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, nextTick } from 'vue'
-import { Promotion, Loading } from '@element-plus/icons-vue'
-import { postQuery } from '../api'
+import { ref, nextTick, onMounted } from 'vue'
+import { Promotion, Close } from '@element-plus/icons-vue'
+import { streamQuery, getConversations, createConversation, getConversation, deleteConversation } from '../api'
 import ChatBubble from '../components/ChatBubble.vue'
-import { ElMessage } from 'element-plus'
+import ConversationList from '../components/ConversationList.vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 const messages = ref([])
 const input = ref('')
 const loading = ref(false)
 const chatRef = ref(null)
+const conversations = ref([])
+const activeConvId = ref(null)
+let abortController = null
 
 const exampleQuestions = [
   '什么是 Transformer？',
@@ -73,9 +90,66 @@ const exampleQuestions = [
   '如何配置 MCP Server？',
 ]
 
+onMounted(async () => {
+  await loadConversations()
+})
+
+async function loadConversations() {
+  try {
+    const res = await getConversations()
+    conversations.value = res.data
+  } catch (_) { /* ignore */ }
+}
+
+async function newConversation() {
+  try {
+    const res = await createConversation({ title: '新对话' })
+    conversations.value.unshift(res.data)
+    activeConvId.value = res.data.id
+    messages.value = []
+  } catch (e) {
+    ElMessage.error('创建对话失败')
+  }
+}
+
+async function selectConversation(id) {
+  activeConvId.value = id
+  messages.value = []
+  try {
+    const res = await getConversation(id)
+    messages.value = res.data.messages.map(m => ({
+      text: m.content,
+      role: m.role,
+      meta: m.meta_json ? JSON.parse(m.meta_json) : null,
+    }))
+    scrollBottom()
+  } catch (_) { /* ignore */ }
+}
+
+async function removeConversation(id) {
+  try {
+    await ElMessageBox.confirm('确定删除该对话？', '确认', { type: 'warning' })
+    await deleteConversation(id)
+    conversations.value = conversations.value.filter(c => c.id !== id)
+    if (activeConvId.value === id) {
+      activeConvId.value = null
+      messages.value = []
+    }
+  } catch (_) { /* cancelled */ }
+}
+
 async function sendMessage(text) {
   const q = (text || input.value).trim()
   if (!q || loading.value) return
+
+  if (!activeConvId.value) {
+    await newConversation()
+  }
+
+  if (abortController) {
+    abortController.abort()
+    abortController = null
+  }
 
   messages.value.push({ text: q, role: 'user' })
   input.value = ''
@@ -83,24 +157,42 @@ async function sendMessage(text) {
   await nextTick()
   scrollBottom()
 
-  try {
-    const res = await postQuery(q)
-    const data = res.data
-    messages.value.push({
-      text: data.answer,
-      role: 'assistant',
-      meta: {
-        route: data.route,
-        token_estimate: data.token_estimate,
-        sources: data.sources,
-      },
-    })
-  } catch (e) {
-    ElMessage.error('查询失败: ' + (e.response?.data?.detail || e.message))
-  } finally {
+  const assistantIndex = messages.value.length
+  messages.value.push({ text: '', role: 'assistant', meta: null })
+
+  abortController = streamQuery(q, {
+    onToken(token) {
+      messages.value[assistantIndex].text += token
+      scrollBottom()
+    },
+    onMeta(meta) {
+      messages.value[assistantIndex].meta = {
+        route: meta.route,
+        token_estimate: meta.token_estimate,
+        sources: meta.sources,
+      }
+    },
+    onDone() {
+      loading.value = false
+      abortController = null
+      scrollBottom()
+      loadConversations() // refresh titles
+    },
+    onError(err) {
+      loading.value = false
+      abortController = null
+      messages.value[assistantIndex].text = '查询失败: ' + err
+      ElMessage.error('查询失败: ' + err)
+      scrollBottom()
+    },
+  })
+}
+
+function stopStreaming() {
+  if (abortController) {
+    abortController.abort()
+    abortController = null
     loading.value = false
-    await nextTick()
-    scrollBottom()
   }
 }
 
@@ -112,12 +204,18 @@ function scrollBottom() {
 </script>
 
 <style scoped>
+.query-layout {
+  display: flex;
+  height: calc(100vh - 56px);
+  margin: -28px;
+}
 .query-page {
+  flex: 1;
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 56px);
-  max-width: 800px;
+  max-width: 750px;
   margin: 0 auto;
+  padding: 28px 28px 0;
 }
 .chat-container {
   flex: 1;
@@ -126,7 +224,7 @@ function scrollBottom() {
 }
 .welcome {
   text-align: center;
-  padding: 80px 20px 40px;
+  padding: 60px 20px 30px;
 }
 .welcome-icon {
   width: 64px;
@@ -172,14 +270,6 @@ function scrollBottom() {
 .chat-messages {
   padding: 8px 0;
 }
-.loading-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 16px 4px;
-  color: #6366f1;
-  font-size: 14px;
-}
 .chat-input-bar {
   padding: 16px 0 8px;
   background: #f5f6f8;
@@ -195,5 +285,14 @@ function scrollBottom() {
 }
 .send-btn:disabled {
   background: #ccc;
+}
+.stop-btn {
+  background: #ef4444;
+  border: none;
+  color: #fff;
+}
+.stop-btn:hover {
+  opacity: 0.9;
+  color: #fff;
 }
 </style>

@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from store.wiki_store import _ensure_wiki
 from store.raw_store import ensure_raw
+from store import db as _db  # trigger table creation
 from routers.api import router as api_router
 
 logging.basicConfig(

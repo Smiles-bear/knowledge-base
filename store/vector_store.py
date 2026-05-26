@@ -3,8 +3,8 @@ import os
 import re
 import logging
 import chromadb
-from sentence_transformers import SentenceTransformer
-from config import CHROMA_DIR, WIKI_DIR, CHUNK_SIZE, CHUNK_OVERLAP
+from sentence_transformers import SentenceTransformer, CrossEncoder
+from config import CHROMA_DIR, WIKI_DIR, CHUNK_SIZE, CHUNK_OVERLAP, RERANKER_MODEL
 
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 
@@ -17,6 +17,24 @@ class VectorStore:
         self.embedder = SentenceTransformer(EMBEDDING_MODEL)
         self.client = chromadb.PersistentClient(path=CHROMA_DIR)
         self.collection = self.client.get_or_create_collection("wiki_knowledge")
+        self._reranker = None
+
+    def _get_reranker(self):
+        if self._reranker is None:
+            logger.info("Loading cross-encoder reranker: %s", RERANKER_MODEL)
+            self._reranker = CrossEncoder(RERANKER_MODEL)
+        return self._reranker
+
+    def rerank(self, query: str, candidates: list[str], top_k: int = 3) -> list[str]:
+        """Cross-encoder 重排序候选文档"""
+        if len(candidates) <= 1:
+            return candidates
+        reranker = self._get_reranker()
+        pairs = [[query, doc] for doc in candidates]
+        scores = reranker.predict(pairs)
+        ranked = sorted(zip(candidates, scores), key=lambda x: x[1], reverse=True)
+        logger.info("Reranked %d candidates -> top %d", len(candidates), top_k)
+        return [doc for doc, _ in ranked[:top_k]]
 
     def _chunk_markdown(self, text, source):
         """按 ## 标题分块，保持 wiki 页面结构"""
@@ -77,18 +95,27 @@ class VectorStore:
         scored.sort(key=lambda x: x[1], reverse=True)
         return [t for t, _ in scored[:top_k]]
 
-    def search(self, query, top_k=3):
-        """混合检索（RRF 融合）"""
+    def search(self, query, top_k=3, rerank=True):
+        """混合检索（RRF 融合 + 可选 cross-encoder 重排序）"""
         vec = self._vector_search(query, top_k * 2)
         kw = self._keyword_search(query, top_k * 2)
         if not kw:
-            return vec[:top_k]
-        if not vec:
-            return kw[:top_k]
-        scores = {}
-        for rank, text in enumerate(vec):
-            scores[text] = scores.get(text, 0) + 1.0 / (60 + rank + 1)
-        for rank, text in enumerate(kw):
-            scores[text] = scores.get(text, 0) + 1.0 / (60 + rank + 1)
-        ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-        return [t for t, _ in ranked[:top_k]]
+            candidates = vec[:top_k]
+        elif not vec:
+            candidates = kw[:top_k]
+        else:
+            scores = {}
+            for rank, text in enumerate(vec):
+                scores[text] = scores.get(text, 0) + 1.0 / (60 + rank + 1)
+            for rank, text in enumerate(kw):
+                scores[text] = scores.get(text, 0) + 1.0 / (60 + rank + 1)
+            ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+            candidates = [t for t, _ in ranked[:top_k * 2]]
+
+        # Cross-encoder rerank
+        if rerank and len(candidates) > top_k:
+            candidates = self.rerank(query, candidates, top_k)
+        else:
+            candidates = candidates[:top_k]
+
+        return candidates

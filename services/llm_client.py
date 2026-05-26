@@ -41,3 +41,24 @@ def chat_text(system: str, user: str, temperature: float = 0.3) -> str:
     except Exception as e:
         logger.error("LLM 调用失败: %s", e)
         raise
+
+
+def chat_text_stream(system: str, user: str, temperature: float = 0.3):
+    """调用 LLM 并流式逐 token 返回"""
+    try:
+        stream = client.chat.completions.create(
+            model=DEEPSEEK_MODEL,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            temperature=temperature,
+            stream=True,
+        )
+        for chunk in stream:
+            delta = chunk.choices[0].delta
+            if delta.content:
+                yield delta.content
+    except Exception as e:
+        logger.error("LLM 流式调用失败: %s", e)
+        raise

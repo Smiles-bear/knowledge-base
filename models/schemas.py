@@ -19,6 +19,7 @@ class IngestResponse(BaseModel):
 
 class QueryRequest(BaseModel):
     question: str
+    session_id: Optional[str] = None
 
 
 class QueryResponse(BaseModel):
@@ -46,3 +47,31 @@ class HealthResponse(BaseModel):
     wiki_articles: int
     raw_sources: int
     modes: list[str] = ["wiki_direct", "rag_search", "ingest", "lint", "archive"]
+
+
+class ConversationCreate(BaseModel):
+    title: str = "New Conversation"
+
+
+class ConversationResponse(BaseModel):
+    id: str
+    title: str
+    created_at: str
+    updated_at: str
+    message_count: int = 0
+
+
+class MessageSchema(BaseModel):
+    id: int
+    role: str
+    content: str
+    meta_json: Optional[str] = None
+    created_at: str
+
+
+class ConversationDetail(BaseModel):
+    id: str
+    title: str
+    created_at: str
+    updated_at: str
+    messages: list[MessageSchema] = []

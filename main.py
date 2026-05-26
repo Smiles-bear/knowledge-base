@@ -1,7 +1,10 @@
 """企业级知识库 — FastAPI 入口"""
 import sys
+import os
 import logging
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from store.wiki_store import _ensure_wiki
 from store.raw_store import ensure_raw
 from routers.api import router as api_router
@@ -25,9 +28,20 @@ _ensure_wiki()
 
 app.include_router(api_router)
 
+# 前端静态文件服务
+FRONTEND_DIST = os.path.join(os.path.dirname(__file__), "frontend", "dist")
+_has_frontend = os.path.exists(FRONTEND_DIST)
+
+if _has_frontend:
+    assets_dir = os.path.join(FRONTEND_DIST, "assets")
+    if os.path.exists(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
 
 @app.get("/")
 async def root():
+    if _has_frontend:
+        return FileResponse(os.path.join(FRONTEND_DIST, "index.html"))
     return {
         "name": "Enterprise Knowledge Base",
         "version": "1.0.0",

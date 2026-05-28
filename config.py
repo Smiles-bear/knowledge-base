@@ -12,13 +12,12 @@ if os.path.exists(_ENV_FILE):
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./knowledge.db")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://kb_user:kb_pass@localhost:5432/knowledge_base")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 RAW_DIR = os.path.join(BASE_DIR, "raw")
 WIKI_DIR = os.path.join(BASE_DIR, "wiki")
-CHROMA_DIR = os.path.join(BASE_DIR, "chroma_db")
 
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50
@@ -26,3 +25,4 @@ HIGH_CONFIDENCE_THRESHOLD = 2
 VERIFY_ENABLED = True
 RERANKER_MODEL = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
 STALE_DAYS = int(os.getenv("STALE_DAYS", "90"))
+MAX_CONTEXT_CHARS = 2000  # 上下文预算，超了会自动压缩

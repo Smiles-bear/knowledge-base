@@ -1,28 +1,44 @@
-"""向量存储：ChromaDB + BGE Embedding，只索引 wiki/ 目录"""
+"""向量存储：PostgreSQL + pgvector + BGE Embedding，只索引 wiki/ 目录"""
 import os
 import re
 import logging
-import chromadb
 from sentence_transformers import SentenceTransformer, CrossEncoder
-from config import CHROMA_DIR, WIKI_DIR, CHUNK_SIZE, CHUNK_OVERLAP, RERANKER_MODEL
+from store.db import SessionLocal, WikiChunk
+from config import WIKI_DIR, CHUNK_SIZE, CHUNK_OVERLAP, RERANKER_MODEL
 
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 
 EMBEDDING_MODEL = "BAAI/bge-small-zh-v1.5"
 logger = logging.getLogger(__name__)
 
+# 单例模型，避免多次加载撑爆内存
+_shared_embedder = None
+_shared_reranker = None
+
+
+def get_embedder():
+    global _shared_embedder
+    if _shared_embedder is None:
+        _shared_embedder = SentenceTransformer(EMBEDDING_MODEL)
+    return _shared_embedder
+
+
+def get_reranker():
+    global _shared_reranker
+    if _shared_reranker is None:
+        logger.info("Loading cross-encoder reranker: %s", RERANKER_MODEL)
+        _shared_reranker = CrossEncoder(RERANKER_MODEL)
+    return _shared_reranker
+
 
 class VectorStore:
     def __init__(self):
-        self.embedder = SentenceTransformer(EMBEDDING_MODEL)
-        self.client = chromadb.PersistentClient(path=CHROMA_DIR)
-        self.collection = self.client.get_or_create_collection("wiki_knowledge")
+        self.embedder = get_embedder()
         self._reranker = None
 
     def _get_reranker(self):
         if self._reranker is None:
-            logger.info("Loading cross-encoder reranker: %s", RERANKER_MODEL)
-            self._reranker = CrossEncoder(RERANKER_MODEL)
+            self._reranker = get_reranker()
         return self._reranker
 
     def rerank(self, query: str, candidates: list[str], top_k: int = 3) -> list[str]:
@@ -64,41 +80,71 @@ class VectorStore:
         return documents
 
     def build_index(self):
+        """从 wiki/ 目录重建向量索引"""
         docs = self.load_wiki_files()
         if not docs:
             logger.warning("wiki/ 目录为空")
             return
-        existing = self.collection.get()
-        if existing["ids"]:
-            self.collection.delete(ids=existing["ids"])
-        texts = [d["text"] for d in docs]
-        embeddings = self.embedder.encode(texts).tolist()
-        metadatas = [{"source": d["source"], "index": d["index"]} for d in docs]
-        ids = [f"{d['source']}_{d['index']}" for d in docs]
-        self.collection.add(ids=ids, embeddings=embeddings, documents=texts, metadatas=metadatas)
-        logger.info("向量索引完成: %d 块, %d 文件", len(docs), len(set(d["source"] for d in docs)))
+
+        session = SessionLocal()
+        try:
+            # 清空旧索引
+            session.query(WikiChunk).delete()
+            session.commit()
+
+            texts = [d["text"] for d in docs]
+            embeddings = self.embedder.encode(texts).tolist()
+
+            for doc, emb in zip(docs, embeddings):
+                chunk = WikiChunk(
+                    source=doc["source"],
+                    chunk_index=doc["index"],
+                    content=doc["text"],
+                    embedding=emb,
+                )
+                session.add(chunk)
+
+            session.commit()
+            logger.info("向量索引完成: %d 块, %d 文件", len(docs), len(set(d["source"] for d in docs)))
+        finally:
+            session.close()
 
     def _vector_search(self, query, top_k):
-        emb = self.embedder.encode([query]).tolist()
-        results = self.collection.query(query_embeddings=emb, n_results=top_k)
-        return results["documents"][0] if results["documents"] else []
+        """pgvector 余弦相似度检索"""
+        emb = self.embedder.encode([query]).tolist()[0]
+        session = SessionLocal()
+        try:
+            results = session.query(WikiChunk).order_by(
+                WikiChunk.embedding.cosine_distance(emb)
+            ).limit(top_k).all()
+            return [r.content for r in results]
+        finally:
+            session.close()
 
     def _keyword_search(self, query, top_k):
-        docs = self.load_wiki_files()
-        if not docs:
-            return []
-        keywords = set(re.findall(r"[一-鿿]+|[a-zA-Z]+", query.lower()))
-        if not keywords:
-            return []
-        scored = [(d["text"], sum(1 for kw in keywords if kw in d["text"].lower())) for d in docs]
-        scored = [(t, s) for t, s in scored if s > 0]
-        scored.sort(key=lambda x: x[1], reverse=True)
-        return [t for t, _ in scored[:top_k]]
+        """关键词命中检索：从 DB 加载所有 chunk，Python 侧打分"""
+        session = SessionLocal()
+        try:
+            all_chunks = session.query(WikiChunk.content).all()
+            if not all_chunks:
+                return []
+
+            keywords = set(re.findall(r"[一-鿿]+|[a-zA-Z]+", query.lower()))
+            if not keywords:
+                return []
+
+            scored = [(r.content, sum(1 for kw in keywords if kw in r.content.lower())) for r in all_chunks]
+            scored = [(t, s) for t, s in scored if s > 0]
+            scored.sort(key=lambda x: x[1], reverse=True)
+            return [t for t, _ in scored[:top_k]]
+        finally:
+            session.close()
 
     def search(self, query, top_k=3, rerank=True):
         """混合检索（RRF 融合 + 可选 cross-encoder 重排序）"""
         vec = self._vector_search(query, top_k * 2)
         kw = self._keyword_search(query, top_k * 2)
+
         if not kw:
             candidates = vec[:top_k]
         elif not vec:
@@ -112,7 +158,6 @@ class VectorStore:
             ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
             candidates = [t for t, _ in ranked[:top_k * 2]]
 
-        # Cross-encoder rerank
         if rerank and len(candidates) > top_k:
             candidates = self.rerank(query, candidates, top_k)
         else:

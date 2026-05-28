@@ -1,13 +1,16 @@
 """企业级知识库 — FastAPI 入口"""
 import sys
 import os
+import time
 import logging
-from fastapi import FastAPI
+from collections import defaultdict
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from store.wiki_store import _ensure_wiki
 from store.raw_store import ensure_raw
-from store import db as _db  # trigger table creation
+from store.db import init_db
 from routers.api import router as api_router
 
 logging.basicConfig(
@@ -17,15 +20,54 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# 简易速率限制：每 IP 每分钟最多 30 次请求
+_rate_window = 60  # 秒
+_rate_limit = 30   # 次
+_rate_records: dict[str, list[float]] = defaultdict(list)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    ensure_raw()
+    _ensure_wiki()
+    try:
+        init_db()
+    except Exception as e:
+        logger.warning("DB init skipped (pgvector may not be installed): %s", e)
+    yield
+
+
 app = FastAPI(
     title="Enterprise Knowledge Base",
     description="RAG + Karpathy LLM Wiki + 反幻觉验证 — 企业级知识库系统",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
-# 启动时初始化目录
-ensure_raw()
-_ensure_wiki()
+# 请求体大小限制 5MB
+MAX_BODY_SIZE = 5 * 1024 * 1024
+
+
+@app.middleware("http")
+async def security_middleware(request: Request, call_next):
+    # 1. 速率限制
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    records = _rate_records[client_ip]
+    # 清理过期记录
+    records[:] = [t for t in records if now - t < _rate_window]
+    if len(records) >= _rate_limit:
+        logger.warning("速率限制触发: %s (%d 次/%ds)", client_ip, len(records), _rate_window)
+        return JSONResponse({"detail": "请求过于频繁，请稍后再试"}, status_code=429)
+    records.append(now)
+
+    # 2. 请求体大小限制
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > MAX_BODY_SIZE:
+        return JSONResponse({"detail": "请求体过大，上限 5MB"}, status_code=413)
+
+    return await call_next(request)
+
 
 app.include_router(api_router)
 
@@ -60,5 +102,5 @@ async def root():
 
 if __name__ == "__main__":
     import uvicorn
-    logger.info("启动企业级知识库服务...")
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+    logger.info("启动企业级知识库服务 (内网可访问: http://<本机IP>:8000)...")
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

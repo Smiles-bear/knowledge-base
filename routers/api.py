@@ -20,6 +20,8 @@ from services.linter import run_lint
 from services.archiver import archive_answer
 from services.cache import get as cache_get, set as cache_set, invalidate_all as cache_invalidate, get_stats as cache_stats
 from services.llm_client import chat_text, chat_text_stream
+from services.context_compressor import compress as compress_context
+from services.semantic_cache import lookup as semantic_lookup, store as semantic_store, invalidate_all as semantic_invalidate
 from store.raw_store import save_raw, list_raw
 from store.wiki_store import list_articles
 from store.db import SessionLocal, Conversation, Message
@@ -59,6 +61,15 @@ async def ingest(req: IngestRequest):
         flagged = sum(1 for c in claims if not c.get("found_in_source"))
 
     cache_invalidate()
+    semantic_invalidate()
+
+    # 增量重建向量索引，让新知识立即可检索
+    try:
+        from store.vector_store import VectorStore
+        VectorStore().build_index()
+    except Exception as e:
+        logger.warning("向量索引重建失败: %s", e)
+
     return IngestResponse(
         status="completed",
         wiki_path=result.get("path", ""),
@@ -68,30 +79,83 @@ async def ingest(req: IngestRequest):
     )
 
 
+def _load_history(session_id: str | None) -> tuple[str, str | None]:
+    """加载对话历史，返回 (history_text, title)"""
+    if not session_id:
+        return "", None
+    db = SessionLocal()
+    try:
+        conv = db.query(Conversation).filter(Conversation.id == session_id).first()
+        if not conv:
+            return "", None
+        messages = conv.messages[-10:]  # 最近 10 条
+        lines = []
+        for m in messages:
+            role = "用户" if m.role == "user" else "助手"
+            lines.append(f"{role}：{m.content}")
+        return "\n".join(lines), conv.title
+    finally:
+        db.close()
+
+
+def _save_message(session_id: str, role: str, content: str):
+    """保存消息到对话"""
+    db = SessionLocal()
+    try:
+        conv = db.query(Conversation).filter(Conversation.id == session_id).first()
+        if not conv:
+            conv = Conversation(id=session_id, title=content[:30])
+            db.add(conv)
+        msg = Message(conversation_id=session_id, role=role, content=content)
+        db.add(msg)
+        conv.updated_at = datetime.now(timezone.utc)
+        db.commit()
+    except Exception as e:
+        logger.warning("保存消息失败: %s", e)
+    finally:
+        db.close()
+
+
 @router.post("/query", response_model=QueryResponse)
 async def query(req: QueryRequest):
-    """Query 操作：意图路由 → 检索 → 回答 → 归档判断"""
+    """Query 操作：意图路由 → 检索 → 多轮对话 → 回答"""
     if not req.question.strip():
         raise HTTPException(status_code=400, detail="问题不能为空")
 
-    # 查缓存
-    cached = cache_get(req.question)
-    if cached:
-        return QueryResponse(**cached)
+    # 三级缓存查找：精确 → 语义 → 生成
+    if not req.session_id:
+        cached = cache_get(req.question)
+        if not cached:
+            cached = semantic_lookup(req.question)
+        if cached:
+            return QueryResponse(**cached)
+
+    # 加载对话历史
+    history, _ = _load_history(req.session_id)
 
     # 意图路由
     route_info = route(req.question)
 
     # 检索
     context = search(req.question, route_info)
+    context = compress_context(context) if context else context
 
-    # 回答
+    # 构建 Prompt（含历史）
+    system_prompt = QUERY_SYSTEM
+    if history:
+        system_prompt += f"\n\n## 对话历史（用于理解上下文和指代）\n{history}\n---\n请基于以上历史理解用户意图，结合知识库内容回答当前问题。"
+
     user_msg = f"知识库内容：\n{context}\n\n问题：{req.question}" if context else req.question
-    answer = chat_text(QUERY_SYSTEM, user_msg)
+    answer = chat_text(system_prompt, user_msg)
 
     token_est = {"wiki_direct": 1500, "wiki_with_links": 3000, "rag_search": 5000, "simple_chat": 500}.get(
         route_info.get("route", "rag_search"), 3000
     )
+
+    # 保存对话消息
+    session_id = req.session_id or str(uuid.uuid4())
+    _save_message(session_id, "user", req.question)
+    _save_message(session_id, "assistant", answer)
 
     response = QueryResponse(
         answer=answer,
@@ -99,32 +163,47 @@ async def query(req: QueryRequest):
         route_reason=route_info.get("reason", ""),
         token_estimate=token_est,
         sources=[s.split("\n")[0] for s in context.split("---")][:5] if context else [],
+        session_id=session_id,
     )
 
     # 写入缓存
-    cache_set(req.question, response.model_dump())
+    if not req.session_id:
+        cache_set(req.question, response.model_dump())
+        semantic_store(req.question, response.model_dump())
 
     return response
 
 
 @router.post("/query/stream")
 async def query_stream(req: QueryRequest):
-    """Query 操作（SSE 流式）：Token 逐字返回"""
+    """Query 操作（SSE 流式 + 多轮对话）：Token 逐字返回"""
     if not req.question.strip():
         raise HTTPException(status_code=400, detail="问题不能为空")
 
-    cached = cache_get(req.question)
-    if cached:
-        import json as _json
+    if not req.session_id:
+        cached = cache_get(req.question)
+        if not cached:
+            cached = semantic_lookup(req.question)
+        if cached:
+            import json as _json
 
-        async def cached_stream():
-            yield f"data: {_json.dumps({'type': 'complete', 'data': cached}, ensure_ascii=False)}\n\n"
+            async def cached_stream():
+                yield f"data: {_json.dumps({'type': 'complete', 'data': cached}, ensure_ascii=False)}\n\n"
 
-        return StreamingResponse(cached_stream(), media_type="text/event-stream")
+            return StreamingResponse(cached_stream(), media_type="text/event-stream")
 
+    history, _ = _load_history(req.session_id)
     route_info = route(req.question)
     context = search(req.question, route_info)
+    context = compress_context(context) if context else context
+
+    system_prompt = QUERY_SYSTEM
+    if history:
+        system_prompt += f"\n\n## 对话历史（用于理解上下文和指代）\n{history}\n---\n请基于以上历史理解用户意图，结合知识库内容回答当前问题。"
+
     user_msg = f"知识库内容：\n{context}\n\n问题：{req.question}" if context else req.question
+    session_id = req.session_id or str(uuid.uuid4())
+    _save_message(session_id, "user", req.question)
 
     async def event_stream():
         full_answer = []
@@ -138,28 +217,30 @@ async def query_stream(req: QueryRequest):
             yield f"data: {json.dumps(meta, ensure_ascii=False)}\n\n"
 
             # 流式 token
-            for token in chat_text_stream(QUERY_SYSTEM, user_msg):
+            for token in chat_text_stream(system_prompt, user_msg):
                 full_answer.append(token)
                 yield f"data: {json.dumps({'type': 'token', 'content': token}, ensure_ascii=False)}\n\n"
 
             # 完成
-            yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+            answer = "".join(full_answer)
+            _save_message(session_id, "assistant", answer)
+            yield f"data: {json.dumps({'type': 'done', 'session_id': session_id}, ensure_ascii=False)}\n\n"
 
             # 写缓存
-            answer = "".join(full_answer)
             token_est = {"wiki_direct": 1500, "wiki_with_links": 3000, "rag_search": 5000, "simple_chat": 500}.get(
                 route_info.get("route", "rag_search"), 3000
             )
-            cache_set(
-                req.question,
-                {
-                    "answer": answer,
-                    "route": route_info.get("route", "rag_search"),
-                    "route_reason": route_info.get("reason", ""),
-                    "token_estimate": token_est,
-                    "sources": [s.split("\n")[0] for s in context.split("---")][:5] if context else [],
-                },
-            )
+            if not req.session_id:
+                cache_set(
+                    req.question,
+                    {
+                        "answer": answer,
+                        "route": route_info.get("route", "rag_search"),
+                        "route_reason": route_info.get("reason", ""),
+                        "token_estimate": token_est,
+                        "sources": [s.split("\n")[0] for s in context.split("---")][:5] if context else [],
+                    },
+                )
         except Exception as e:
             logger.error("Stream error: %s", e)
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"

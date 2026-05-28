@@ -28,6 +28,7 @@ class QueryResponse(BaseModel):
     route_reason: str
     token_estimate: int
     sources: list[str] = []
+    session_id: Optional[str] = None
 
 
 class ArchiveRequest(BaseModel):

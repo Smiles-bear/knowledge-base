@@ -8,3 +8,6 @@ wiki/
 raw/
 frontend/dist/
 frontend/node_modules/
+.redis-backups/
+.idea/
+*.log

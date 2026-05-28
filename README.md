@@ -118,6 +118,37 @@ uvicorn main:app --reload
 docker-compose up -d
 ```
 
+### Redis Backup / Redis 备份
+
+项目内置了 Redis 缓存备份方案，支持 RDB 快照 + AOF 日志双重持久化。
+
+**手动备份：**
+
+```bash
+# Windows
+powershell -File scripts/redis-backup.ps1
+
+# Linux / Mac
+bash scripts/redis-backup.sh
+```
+
+**配置每日自动备份：**
+
+```bash
+# Windows（以管理员身份运行）
+powershell -File scripts/setup-backup.ps1
+
+# Linux / Mac
+bash scripts/setup-backup.sh
+```
+
+备份文件存储在 `.redis-backups/` 目录，自动保留最近 30 个备份。Redis 默认已开启：
+
+| 持久化机制 | 说明 |
+|-----------|------|
+| RDB (dump.rdb) | 定时快照：15分钟/1key、5分钟/10key、1分钟/10000key |
+| AOF (appendonly.aof) | 每次写入实时记录，最多丢失 1 秒数据 |
+
 ## API Endpoints / API 端点
 
 | Method | Path | Description |

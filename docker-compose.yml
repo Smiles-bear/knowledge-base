@@ -7,13 +7,38 @@ services:
       - "8000:8000"
     env_file:
       - .env
+    environment:
+      - DATABASE_URL=postgresql://kb_user:kb_pass@db:5432/knowledge_base
+      - REDIS_URL=redis://redis:6379/0
     depends_on:
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
     volumes:
       - ./wiki:/app/wiki
       - ./raw:/app/raw
+
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: kb_user
+      POSTGRES_PASSWORD: kb_pass
+      POSTGRES_DB: knowledge_base
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kb_user -d knowledge_base"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+
+volumes:
+  pgdata:

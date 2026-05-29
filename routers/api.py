@@ -28,6 +28,70 @@ from store.db import SessionLocal, Conversation, Message
 import uuid
 from datetime import datetime, timezone
 
+import os
+from store.wiki_store import list_articles
+
+WIKI_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "wiki")
+
+
+def _build_page_tree(article_paths: list[str]) -> list[dict]:
+    """将扁平的 wiki/ 路径列表构建为嵌套页面树"""
+    tree: dict[str, dict] = {}
+    for path in sorted(article_paths):
+        path = path.replace("\\", "/")
+        if path.endswith(".md"):
+            path = path[:-3]
+        parts = [p for p in path.split("/") if p]
+        node = tree
+        for i, part in enumerate(parts):
+            if part not in node:
+                node[part] = {"_children": {}}
+            if i == len(parts) - 1:
+                node[part]["_leaf"] = True
+            node = node[part]["_children"]
+
+    def convert(node: dict, prefix: str = "") -> list[dict]:
+        result = []
+        for name, data in node.items():
+            full_path = f"{prefix}/{name}" if prefix else name
+            children = convert(data.get("_children", {}), full_path)
+            result.append({
+                "path": full_path,
+                "title": name.replace("-", " ").replace("_", " ").title(),
+                "children": children,
+            })
+        return result
+
+    return convert(tree)
+
+
+def _read_wiki_doc(rel_path: str) -> dict | None:
+    """读取单篇 wiki 文档，返回 {path, title, content, confidence, updated_at, stats}"""
+    rel_path = rel_path.strip("/")
+    md_path = os.path.join(WIKI_DIR, rel_path + ".md")
+    if not os.path.isfile(md_path):
+        return None
+    with open(md_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    title = rel_path.split("/")[-1].replace("-", " ").replace("_", " ").title()
+    for line in content.split("\n"):
+        if line.startswith("# "):
+            title = line[2:].strip()
+            break
+    statements = len([l for l in content.split("\n") if l.strip() and not l.startswith("#")])
+    references = len([l for l in content.split("\n") if l.startswith(">")])
+    stat = os.stat(md_path)
+    from datetime import datetime, timezone
+    return {
+        "path": rel_path,
+        "title": title,
+        "content": content,
+        "confidence": "verified" if "[已验证]" in content else ("inferred" if "[推断]" in content else "unverified"),
+        "updated_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+        "stats": {"statements": statements, "references": references},
+    }
+
+
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["knowledge-base"])
 
@@ -361,3 +425,66 @@ async def delete_conversation(conv_id: str):
 async def cache_statistics():
     """缓存命中率统计"""
     return cache_stats()
+
+
+@router.get("/wiki/tree")
+async def wiki_tree():
+    """返回 Wiki 页面树结构"""
+    articles = list_articles()
+    if isinstance(articles, dict):
+        articles = list(articles.keys())
+    if articles and isinstance(articles[0], dict):
+        articles = [a.get("path", "") for a in articles]
+    tree = _build_page_tree(articles)
+    return {"pages": tree}
+
+
+@router.get("/wiki/{path:path}")
+async def wiki_doc(path: str):
+    """返回单篇 Wiki 文档"""
+    doc = _read_wiki_doc(path)
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"文档不存在: {path}")
+    return doc
+
+
+@router.get("/search")
+async def wiki_search(q: str = ""):
+    """全文搜索 wiki 文档"""
+    if not q.strip():
+        return {"query": q, "results": []}
+    articles = list_articles()
+    if isinstance(articles, dict):
+        articles = list(articles.keys())
+    if articles and isinstance(articles[0], dict):
+        articles = [a.get("path", "") for a in articles]
+
+    results = []
+    q_lower = q.lower()
+    for path in sorted(articles):
+        path = path.replace("\\", "/")
+        if path.endswith(".md"):
+            path = path[:-3]
+        title = path.split("/")[-1].replace("-", " ").replace("_", " ").lower()
+        score = 0.0
+        if q_lower in title:
+            score = 0.9
+        elif any(w in title for w in q_lower.split()):
+            score = 0.5
+        if score > 0:
+            doc = _read_wiki_doc(path)
+            snippet = ""
+            if doc:
+                for line in doc["content"].split("\n"):
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        snippet = line[:120]
+                        break
+            results.append({
+                "path": path,
+                "title": path.split("/")[-1].replace("-", " ").replace("_", " ").title(),
+                "snippet": snippet,
+                "score": round(score, 2),
+            })
+    results.sort(key=lambda r: r["score"], reverse=True)
+    return {"query": q, "results": results[:20]}

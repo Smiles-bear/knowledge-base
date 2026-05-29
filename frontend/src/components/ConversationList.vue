@@ -1,7 +1,7 @@
 <template>
   <aside class="conv-sidebar">
     <div class="conv-header">
-      <el-button type="primary" size="small" @click="$emit('new-conversation')" :icon="Plus">
+      <el-button size="small" @click="$emit('new-conversation')" :icon="Plus">
         新建对话
       </el-button>
     </div>
@@ -69,7 +69,7 @@ defineEmits(['select', 'new-conversation', 'delete'])
   background: #f5f6f8;
 }
 .conv-item.active {
-  background: rgba(99, 102, 241, 0.08);
+  background: var(--bg-hover);
 }
 .conv-title {
   font-size: 13px;

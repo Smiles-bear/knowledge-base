@@ -44,19 +44,19 @@ function routeLabel(route) {
   align-items: flex-end;
 }
 .bubble.user .bubble-content {
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  background: var(--text-primary);
   color: #fff;
-  border-radius: 14px 14px 4px 14px;
-  max-width: 70%;
+  border-radius: 12px 12px 4px 12px;
+  max-width: 75%;
 }
 .bubble.assistant {
   align-items: flex-start;
 }
 .bubble.assistant .bubble-content {
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  color: #333;
-  border-radius: 14px 14px 14px 4px;
+  background: var(--bg-code);
+  border: none;
+  color: var(--text-primary);
+  border-radius: 12px 12px 12px 4px;
   max-width: 85%;
 }
 .bubble-content {
@@ -90,8 +90,8 @@ function routeLabel(route) {
 }
 .source-item {
   font-size: 11px;
-  color: #6366f1;
-  background: rgba(99, 102, 241, 0.08);
+  color: var(--text-secondary);
+  background: var(--bg-hover);
   padding: 2px 8px;
   border-radius: 4px;
   max-width: 200px;

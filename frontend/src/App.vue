@@ -26,7 +26,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import WikiSidebar from './components/WikiSidebar.vue'
 import AIPanel from './components/AIPanel.vue'
@@ -45,13 +45,15 @@ const currentDocTitle = computed(() => {
 
 function showSearch() { searchVisible.value = true }
 
-// 全局键盘快捷键
-document.addEventListener('keydown', (e) => {
+function onKeydown(e) {
   if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
     e.preventDefault()
     searchVisible.value = true
   }
-})
+}
+
+onMounted(() => document.addEventListener('keydown', onKeydown))
+onUnmounted(() => document.removeEventListener('keydown', onKeydown))
 </script>
 
 <style>

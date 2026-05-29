@@ -1,0 +1,40 @@
+:root {
+  /* 文字 */
+  --text-primary: #37352f;
+  --text-secondary: #9b9b9b;
+  --text-link: #1a6eb5;
+
+  /* 背景 */
+  --bg-sidebar: #fbfbfa;
+  --bg-content: #ffffff;
+  --bg-code: #f7f6f5;
+  --bg-hover: #f1f0ef;
+
+  /* 边框 */
+  --border-light: #e9e9e7;
+  --border-medium: #e0e0e0;
+
+  /* 状态色 */
+  --color-verified-bg: #e8f5e9;
+  --color-verified-text: #2e7d32;
+  --color-inferred-bg: #fff3e0;
+  --color-inferred-text: #e65100;
+  --color-unverified-bg: #fce4ec;
+  --color-unverified-text: #c62828;
+
+  /* 字体 */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "SF Mono", "Fira Code", "Menlo", "Courier New", monospace;
+
+  /* 字号 */
+  --fs-title: 32px;
+  --fs-h2: 20px;
+  --fs-body: 15px;
+  --fs-aux: 13px;
+  --fs-sidebar: 13px;
+
+  /* 间距 */
+  --sidebar-width: 240px;
+  --content-max: 780px;
+  --ai-panel-width: 480px;
+}

@@ -5,11 +5,12 @@
       <router-view />
     </main>
 
-    <!-- AI浮动按钮 -->
-    <button v-if="!aiPanelVisible" class="ai-fab" @click="aiPanelVisible = true" title="AI 问答">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <!-- AI问答浮动按钮 -->
+    <button v-if="!aiPanelVisible" class="ai-fab" @click="aiPanelVisible = true">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
       </svg>
+      <span>AI 问答</span>
     </button>
 
     <AIPanel
@@ -63,12 +64,23 @@ html, body, #app { height: 100%; font-family: var(--font-sans); color: var(--tex
 .main-content { flex: 1; overflow-y: auto; background: var(--bg-content); }
 .with-panel { margin-right: var(--ai-panel-width); transition: margin-right 0.25s ease; }
 .ai-fab {
-  position: fixed; bottom: 24px; right: 24px; z-index: 999;
-  width: 44px; height: 44px; border-radius: 50%;
+  position: fixed; bottom: 32px; left: 50%; transform: translateX(-50%); z-index: 999;
+  height: 48px; padding: 0 28px; border-radius: 24px;
   background: var(--text-primary); color: #fff; border: none;
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; box-shadow: 0 2px 12px rgba(0,0,0,0.15);
-  transition: transform 0.2s;
+  display: flex; align-items: center; gap: 10px;
+  cursor: pointer;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.25), 0 0 0 4px rgba(55,53,47,0.08);
+  transition: box-shadow 0.2s;
+  font-size: 15px; font-weight: 600;
+  letter-spacing: 0.5px;
+  animation: ai-fab-pulse 2s ease-in-out 1;
 }
-.ai-fab:hover { transform: scale(1.08); }
+.ai-fab:hover {
+  box-shadow: 0 6px 28px rgba(0,0,0,0.35), 0 0 0 8px rgba(55,53,47,0.12);
+}
+@keyframes ai-fab-pulse {
+  0% { box-shadow: 0 4px 20px rgba(0,0,0,0.25), 0 0 0 4px rgba(55,53,47,0.08); }
+  50% { box-shadow: 0 4px 30px rgba(0,0,0,0.4), 0 0 0 16px rgba(55,53,47,0.15); }
+  100% { box-shadow: 0 4px 20px rgba(0,0,0,0.25), 0 0 0 4px rgba(55,53,47,0.08); }
+}
 </style>

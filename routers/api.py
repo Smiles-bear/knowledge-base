@@ -27,11 +27,9 @@ from store.wiki_store import list_articles
 from store.db import SessionLocal, Conversation, Message
 import uuid
 from datetime import datetime, timezone
+from config import WIKI_DIR
 
 import os
-from store.wiki_store import list_articles
-
-WIKI_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "wiki")
 
 
 def _build_page_tree(article_paths: list[str]) -> list[dict]:
@@ -69,19 +67,22 @@ def _read_wiki_doc(rel_path: str) -> dict | None:
     """读取单篇 wiki 文档，返回 {path, title, content, confidence, updated_at, stats}"""
     rel_path = rel_path.strip("/")
     md_path = os.path.join(WIKI_DIR, rel_path + ".md")
+    resolved = os.path.normpath(md_path)
+    if not resolved.startswith(os.path.normpath(WIKI_DIR)):
+        return None
     if not os.path.isfile(md_path):
         return None
     with open(md_path, "r", encoding="utf-8") as f:
         content = f.read()
+    lines = content.split("\n")
     title = rel_path.split("/")[-1].replace("-", " ").replace("_", " ").title()
-    for line in content.split("\n"):
+    for line in lines:
         if line.startswith("# "):
             title = line[2:].strip()
             break
-    statements = len([l for l in content.split("\n") if l.strip() and not l.startswith("#")])
-    references = len([l for l in content.split("\n") if l.startswith(">")])
+    statements = len([l for l in lines if l.strip() and not l.startswith("#")])
+    references = len([l for l in lines if l.startswith(">")])
     stat = os.stat(md_path)
-    from datetime import datetime, timezone
     return {
         "path": rel_path,
         "title": title,

@@ -28,7 +28,7 @@
     <div class="content-card">
       <div class="card-header">
         <h3>Wiki 健康检查</h3>
-        <el-button type="primary" @click="doLint" :loading="linting">
+        <el-button @click="doLint" :loading="linting">
           <el-icon><Search /></el-icon> 运行检查
         </el-button>
       </div>
@@ -105,19 +105,21 @@ async function doLint() {
 </script>
 
 <style scoped>
-.page { max-width: 900px; margin: 0 auto; }
+.page { max-width: 900px; margin: 40px auto; padding: 0 48px; }
 .stat-row { margin-bottom: 16px; }
 .stat-card {
-  background: #fff;
-  border-radius: 12px;
+  background: var(--bg-content);
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
   padding: 28px 20px;
   text-align: center;
 }
-.stat-value { font-size: 30px; font-weight: 700; color: #6366f1; margin-bottom: 6px; }
-.stat-label { font-size: 13px; color: #999; }
+.stat-value { font-size: 30px; font-weight: 700; color: var(--text-primary); margin-bottom: 6px; }
+.stat-label { font-size: 13px; color: var(--text-secondary); }
 .content-card {
-  background: #fff;
-  border-radius: 12px;
+  background: var(--bg-content);
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
   padding: 28px;
 }
 .card-header {
@@ -126,7 +128,7 @@ async function doLint() {
   align-items: center;
   margin-bottom: 20px;
 }
-.card-header h3 { font-size: 18px; color: #333; margin: 0; font-weight: 600; }
-.lint-summary { font-size: 14px; color: #666; margin-bottom: 16px; }
-.lint-summary strong { color: #333; }
+.card-header h3 { font-size: 18px; color: var(--text-primary); margin: 0; font-weight: 600; }
+.lint-summary { font-size: 14px; color: var(--text-secondary); margin-bottom: 16px; }
+.lint-summary strong { color: var(--text-primary); }
 </style>

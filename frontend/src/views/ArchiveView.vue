@@ -20,7 +20,7 @@
           <el-input v-model="form.topic" placeholder="例如: agent-basics, python-tips" />
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" @click="submit" :loading="loading">
+          <el-button @click="submit" :loading="loading">
             提交归档
           </el-button>
           <el-button @click="resetForm">清空</el-button>
@@ -34,7 +34,7 @@
           已归档至 {{ archiveResult.path }}
         </template>
         <template #extra>
-          <el-button type="primary" @click="clearResult">继续归档</el-button>
+          <el-button @click="clearResult">继续归档</el-button>
         </template>
       </el-result>
     </div>
@@ -84,14 +84,15 @@ function clearResult() {
 </script>
 
 <style scoped>
-.page { max-width: 800px; margin: 0 auto; }
+.page { max-width: 800px; margin: 40px auto; padding: 0 48px; }
 .content-card {
-  background: #fff;
-  border-radius: 12px;
-  padding: 28px;
+  background: var(--bg-content);
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  padding: 32px;
   margin-bottom: 16px;
 }
-.content-card h3 { font-size: 18px; color: #333; margin: 0 0 8px 0; font-weight: 600; }
-.card-desc { color: #999; font-size: 13px; margin-bottom: 20px; }
+.content-card h3 { font-size: 18px; color: var(--text-primary); margin: 0 0 8px 0; font-weight: 600; }
+.card-desc { color: var(--text-secondary); font-size: 13px; margin-bottom: 20px; }
 .archive-form { margin-top: 4px; }
 </style>
